@@ -15,9 +15,10 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     @IBOutlet private weak var cameraView: UIView?
     @IBOutlet private weak var highlightView: UIView? {
         didSet {
-            self.highlightView?.layer.borderColor = UIColor.red.cgColor
-            self.highlightView?.layer.borderWidth = 4
-            self.highlightView?.backgroundColor = .clear
+            self.highlightView?.layer.borderColor = UIColor.green.cgColor
+            self.highlightView?.layer.borderWidth = 2
+            self.highlightView?.layer.cornerRadius = 6
+            self.highlightView?.backgroundColor = UIColor(red: 0, green: 1, blue: 0, alpha: 0.2)
         }
     }
     
@@ -25,14 +26,16 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
     private lazy var cameraLayer: AVCaptureVideoPreviewLayer = AVCaptureVideoPreviewLayer(session: self.captureSession)
     private lazy var captureSession: AVCaptureSession = {
         let session = AVCaptureSession()
-        session.sessionPreset = AVCaptureSession.Preset.photo
+        session.sessionPreset = AVCaptureSession.Preset.hd1920x1080
         guard
             let backCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
             let input = try? AVCaptureDeviceInput(device: backCamera)
-        else { return session }
+            else { return session }
         session.addInput(input)
         return session
     }()
+    
+    lazy var originPoint = CGPoint()
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -67,7 +70,7 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             let pixelBuffer: CVPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
             // make sure that there is a previous observation we can feed into the request
             let lastObservation = self.lastObservation
-        else { return }
+            else { return }
         
         // create the request
         let request = VNTrackObjectRequest(detectedObjectObservation: lastObservation, completionHandler: self.handleVisionRequestUpdate)
@@ -93,9 +96,12 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
             self.lastObservation = newObservation
             
             // check the confidence level before updating the UI
-            guard newObservation.confidence >= 0.3 else {
-                // hide the rectangle when we lose accuracy so the user knows something is wrong
-                self.highlightView?.frame = .zero
+            if newObservation.confidence >= 0.3 {
+                self.highlightView?.layer.borderColor = UIColor.green.cgColor
+                self.highlightView?.backgroundColor = UIColor(red: 0, green: 1, blue: 0, alpha: 0.2)
+            } else {
+                self.highlightView?.layer.borderColor = UIColor.gray.cgColor
+                self.highlightView?.backgroundColor = UIColor(white: 1, alpha: 0.2)
                 return
             }
             
@@ -109,24 +115,42 @@ class ViewController: UIViewController, AVCaptureVideoDataOutputSampleBufferDele
         }
     }
     
-    @IBAction private func userTapped(_ sender: UITapGestureRecognizer) {
+    @IBAction func userDragged(_ sender: UIPanGestureRecognizer) {
         // get the center of the tap
-        self.highlightView?.frame.size = CGSize(width: 120, height: 120)
-        self.highlightView?.center = sender.location(in: self.view)
         
-        // convert the rect for the initial observation
-        let originalRect = self.highlightView?.frame ?? .zero
-        var convertedRect = self.cameraLayer.metadataOutputRectConverted(fromLayerRect: originalRect)
-        convertedRect.origin.y = 1 - convertedRect.origin.y
+        switch sender.state {
+        case .began:
+            self.lastObservation = nil
+            self.highlightView?.frame = .zero
+            self.highlightView?.layer.borderColor = UIColor.green.cgColor
+            self.highlightView?.backgroundColor = UIColor(red: 0, green: 1, blue: 0, alpha: 0.2)
+            originPoint = sender.location(in: self.view)
+        case .changed:
+            self.highlightView?.frame = calculateRectangle(firstPoint: originPoint, translationX: sender.translation(in: self.view).x, translationY: sender.translation(in: self.view).y)
+        case .ended:
+            let originalRect = self.highlightView?.frame ?? .zero
+            var convertedRect = self.cameraLayer.metadataOutputRectConverted(fromLayerRect: originalRect)
+            convertedRect.origin.y = 1 - convertedRect.origin.y
+            
+            // set the observation
+            let newObservation = VNDetectedObjectObservation(boundingBox: convertedRect)
+            self.lastObservation = newObservation
+        default:
+            print("unexpected error")
+        }
+    }
+    
+    func calculateRectangle(firstPoint: CGPoint, translationX: CGFloat, translationY: CGFloat) -> CGRect {
+        let size = CGSize(width: abs(translationX), height: abs(translationY))
         
-        // set the observation
-        let newObservation = VNDetectedObjectObservation(boundingBox: convertedRect)
-        self.lastObservation = newObservation
+        return CGRect(origin: firstPoint, size: size)
     }
     
     @IBAction private func resetTapped(_ sender: UIBarButtonItem) {
         self.lastObservation = nil
         self.highlightView?.frame = .zero
+        print("reset observation")
     }
 }
+
 
